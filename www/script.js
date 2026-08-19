@@ -1,4 +1,4 @@
-const API_URL = "https://focuslist-server-us0y.onrender.com/api";
+const API_URL = "http://192.168.1.50:3000/api";
 
 /* ======================================================
    LOGIN / CADASTRO
@@ -131,12 +131,21 @@ const listaTarefasGrupo = document.getElementById("lista-tarefas-grupo");
 
 const filtroTarefasGrupo = document.getElementById("filtro-tarefas-grupo");
 
+const caixaConvites = document.getElementById("caixa-convites");
+
+const listaConvites = document.getElementById("lista-convites");
+
+const contadorConvites = document.getElementById("contador-convites");
+
+const btnSairGrupo = document.getElementById("btn-sair-grupo");
+
 /* ======================================================
    ESTADO
 ====================================================== */
 
 let tarefas = [];
 let grupos = [];
+let convites = [];
 
 let filtroAtual = "todas";
 let modoCadastro = false;
@@ -193,6 +202,22 @@ function obterToken() {
 
 function obterNomeUsuario() {
   return localStorage.getItem("nome_usuario") || "Minha Conta";
+}
+
+function obterUsuarioId() {
+  const token = obterToken();
+
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+
+    return payload.id;
+  } catch {
+    return null;
+  }
 }
 
 function obterHeaderAuth() {
@@ -444,6 +469,10 @@ btnLogout.addEventListener("click", () => {
 
   grupos = [];
 
+  convites = [];
+
+  caixaConvites.classList.add("escondido");
+
   grupoSelecionadoId = null;
 
   grupoMembros = [];
@@ -525,6 +554,117 @@ async function carregarGrupos() {
     atualizarNomeUsuario();
   } catch (err) {
     console.error("Erro ao carregar grupos:", err);
+  }
+}
+
+/* ======================================================
+   CONVITES
+====================================================== */
+
+async function carregarConvites() {
+  try {
+    const res = await fetch(`${API_URL}/convites`, {
+      headers: obterHeaderAuth(),
+    });
+
+    const data = await lerJSON(res);
+
+    if (!res.ok) {
+      throw new Error(data.erro || "Erro ao carregar convites.");
+    }
+
+    convites = Array.isArray(data) ? data : [];
+
+    renderizarConvites();
+  } catch (err) {
+    console.error("Erro ao carregar convites:", err);
+  }
+}
+
+function renderizarConvites() {
+  if (convites.length === 0) {
+    caixaConvites.classList.add("escondido");
+
+    listaConvites.innerHTML = "";
+
+    return;
+  }
+
+  caixaConvites.classList.remove("escondido");
+
+  contadorConvites.textContent = convites.length;
+
+  listaConvites.innerHTML = convites
+    .map(
+      (convite) => `
+        <div class="convite-item">
+          <div class="convite-info">
+            <strong>👥 ${escaparHTML(convite.grupo_nome)}</strong>
+            <span>Convite de ${escaparHTML(convite.convidado_por_nome)}</span>
+          </div>
+
+          <div class="convite-acoes">
+            <button
+              type="button"
+              class="btn-primario btn-pequeno"
+              data-aceitar="${convite.id}"
+            >
+              Aceitar
+            </button>
+
+            <button
+              type="button"
+              class="btn-secundario btn-pequeno"
+              data-recusar="${convite.id}"
+            >
+              Recusar
+            </button>
+          </div>
+        </div>
+        `,
+    )
+    .join("");
+
+  listaConvites.querySelectorAll("[data-aceitar]").forEach((botao) => {
+    botao.addEventListener("click", () => {
+      responderConvite(Number(botao.dataset.aceitar), true);
+    });
+  });
+
+  listaConvites.querySelectorAll("[data-recusar]").forEach((botao) => {
+    botao.addEventListener("click", () => {
+      responderConvite(Number(botao.dataset.recusar), false);
+    });
+  });
+}
+
+async function responderConvite(id, aceitar) {
+  try {
+    const res = await fetch(`${API_URL}/convites/${id}/responder`, {
+      method: "POST",
+
+      headers: obterHeaderAuth(),
+
+      body: JSON.stringify({
+        aceitar,
+      }),
+    });
+
+    const data = await lerJSON(res);
+
+    if (!res.ok) {
+      throw new Error(data.erro || "Erro ao responder convite.");
+    }
+
+    await carregarConvites();
+
+    if (aceitar) {
+      await carregarGrupos();
+    }
+
+    alert(aceitar ? "Você entrou no grupo!" : "Convite recusado.");
+  } catch (err) {
+    alert(err.message);
   }
 }
 
@@ -673,7 +813,55 @@ async function selecionarGrupo(id, sincronizarSelect = true) {
 
   renderizarTarefasGrupo();
   tituloNovaTarefaGrupo.textContent = `Tarefa — ${grupo.nome}`;
+
+  const usuarioId = obterUsuarioId();
+
+  if (usuarioId && Number(grupo.criador_id) !== Number(usuarioId)) {
+    btnSairGrupo.classList.remove("escondido");
+  } else {
+    btnSairGrupo.classList.add("escondido");
+  }
 }
+
+async function sairDoGrupo() {
+  if (!grupoSelecionadoId) {
+    return;
+  }
+
+  const confirmar = confirm("Tem certeza que deseja sair deste grupo?");
+
+  if (!confirmar) {
+    return;
+  }
+
+  btnSairGrupo.disabled = true;
+
+  try {
+    const res = await fetch(`${API_URL}/grupos/${grupoSelecionadoId}/sair`, {
+      method: "POST",
+
+      headers: obterHeaderAuth(),
+    });
+
+    const data = await lerJSON(res);
+
+    if (!res.ok) {
+      throw new Error(data.erro || "Erro ao sair do grupo.");
+    }
+
+    grupoSelecionadoId = null;
+
+    await carregarGrupos();
+
+    alert("Você saiu do grupo.");
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btnSairGrupo.disabled = false;
+  }
+}
+
+btnSairGrupo.addEventListener("click", sairDoGrupo);
 
 async function carregarMembrosGrupo(grupoId) {
   try {
@@ -1070,11 +1258,7 @@ btnAddMembro.addEventListener("click", async () => {
 
     campoEmailMembro.value = "";
 
-    await carregarGrupos();
-
-    await selecionarGrupo(grupoId);
-
-    alert("Membro adicionado com sucesso!");
+    alert(data.mensagem || "Convite enviado com sucesso!");
   } catch (err) {
     alert(err.message);
   } finally {
@@ -1838,6 +2022,8 @@ function resetarAreaGrupos() {
 
   membrosGrupo.classList.add("escondido");
 
+  btnSairGrupo.classList.add("escondido");
+
   listaMembrosGrupo.innerHTML = "";
 
   contadorMembrosGrupo.textContent = "0";
@@ -1885,6 +2071,8 @@ async function iniciarApp() {
   await carregarTarefas();
 
   await carregarGrupos();
+
+  await carregarConvites();
 }
 
 /* ======================================================
