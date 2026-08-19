@@ -1,5 +1,5 @@
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
+const { Pool } = require("pg");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
@@ -25,71 +25,69 @@ app.use(express.static(path.join(__dirname, "www")));
    BANCO
 ====================================================== */
 
-const db = new sqlite3.Database(path.join(__dirname, "database.db"), (err) => {
-  if (err) {
-    console.error("Erro ao abrir banco:", err.message);
-
-    process.exit(1);
-  }
-
-  console.log("Conectado ao banco database.db");
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // O Postgres do Render exige SSL em conexões externas.
+  // Em conexões internas (mesmo ambiente Render) também funciona com isso ativado.
+  ssl:
+    process.env.NODE_ENV === "production"
+      ? { rejectUnauthorized: false }
+      : false,
 });
 
+pool.on("error", (err) => {
+  console.error("Erro inesperado no pool do Postgres:", err.message);
+});
+
+pool
+  .query("SELECT 1")
+  .then(() => console.log("Conectado ao banco Postgres"))
+  .catch((err) => {
+    console.error("Erro ao conectar no banco:", err.message);
+
+    process.exit(1);
+  });
+
 /* ======================================================
-   PROMISES SQLITE
+   PROMISES POSTGRES
+   (mantém a mesma assinatura usada no resto do arquivo,
+   convertendo os placeholders "?" do SQLite para "$1, $2..."
+   usados pelo pg)
 ====================================================== */
 
-function executar(sql, parametros = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, parametros, function (err) {
-      if (err) {
-        reject(err);
+function converterPlaceholders(sql) {
+  let indice = 0;
 
-        return;
-      }
-
-      resolve(this);
-    });
-  });
+  return sql.replace(/\?/g, () => `$${++indice}`);
 }
 
-function buscar(sql, parametros = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, parametros, (err, row) => {
-      if (err) {
-        reject(err);
+async function executar(sql, parametros = []) {
+  const resultado = await pool.query(converterPlaceholders(sql), parametros);
 
-        return;
-      }
-
-      resolve(row);
-    });
-  });
+  return resultado;
 }
 
-function buscarTodos(sql, parametros = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, parametros, (err, rows) => {
-      if (err) {
-        reject(err);
+async function buscar(sql, parametros = []) {
+  const resultado = await pool.query(converterPlaceholders(sql), parametros);
 
-        return;
-      }
+  return resultado.rows[0] || null;
+}
 
-      resolve(rows);
-    });
-  });
+async function buscarTodos(sql, parametros = []) {
+  const resultado = await pool.query(converterPlaceholders(sql), parametros);
+
+  return resultado.rows;
 }
 
 /* ======================================================
    TABELAS
 ====================================================== */
 
-db.serialize(() => {
-  db.run(`
+async function criarTabelas() {
+  await pool.query(`
       CREATE TABLE IF NOT EXISTS usuarios (
 
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
 
         nome TEXT,
 
@@ -100,10 +98,10 @@ db.serialize(() => {
       )
     `);
 
-  db.run(`
+  await pool.query(`
       CREATE TABLE IF NOT EXISTS grupos (
 
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
 
         nome TEXT NOT NULL,
 
@@ -112,7 +110,7 @@ db.serialize(() => {
       )
     `);
 
-  db.run(`
+  await pool.query(`
       CREATE TABLE IF NOT EXISTS grupo_membros (
 
         grupo_id INTEGER NOT NULL,
@@ -127,10 +125,10 @@ db.serialize(() => {
       )
     `);
 
-  db.run(`
+  await pool.query(`
       CREATE TABLE IF NOT EXISTS tarefas (
 
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
 
         usuario_id INTEGER NOT NULL,
 
@@ -145,10 +143,10 @@ db.serialize(() => {
       )
     `);
 
-  db.run(`
+  await pool.query(`
       CREATE TABLE IF NOT EXISTS convites (
 
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
 
         grupo_id INTEGER NOT NULL,
 
@@ -160,6 +158,14 @@ db.serialize(() => {
 
       )
     `);
+
+  console.log("Tabelas verificadas/criadas com sucesso.");
+}
+
+criarTabelas().catch((err) => {
+  console.error("Erro ao criar tabelas:", err.message);
+
+  process.exit(1);
 });
 
 /* ======================================================
@@ -229,7 +235,7 @@ app.post("/api/cadastrar", async (req, res) => {
       mensagem: "Cadastro realizado com sucesso.",
     });
   } catch (err) {
-    if (String(err.message).includes("UNIQUE")) {
+    if (err.code === "23505") {
       return res.status(400).json({
         erro: "E-mail já cadastrado.",
       });
@@ -409,13 +415,17 @@ app.post("/api/grupos", autenticar, async (req, res) => {
               ?,
               ?
             )
+
+          RETURNING id
           `,
       [nome, req.usuario.id],
     );
 
+    const grupoId = resultado.rows[0].id;
+
     await executar(
       `
-        INSERT OR IGNORE INTO
+        INSERT INTO
           grupo_membros
 
           (
@@ -429,12 +439,14 @@ app.post("/api/grupos", autenticar, async (req, res) => {
             ?,
             ?
           )
+
+        ON CONFLICT (grupo_id, usuario_id) DO NOTHING
         `,
-      [resultado.lastID, req.usuario.id],
+      [grupoId, req.usuario.id],
     );
 
     res.status(201).json({
-      id: resultado.lastID,
+      id: grupoId,
 
       nome,
 
@@ -762,7 +774,7 @@ app.post("/api/convites/:id/responder", autenticar, async (req, res) => {
     if (aceitar) {
       await executar(
         `
-          INSERT OR IGNORE INTO
+          INSERT INTO
             grupo_membros
 
             (
@@ -776,6 +788,8 @@ app.post("/api/convites/:id/responder", autenticar, async (req, res) => {
               ?,
               ?
             )
+
+          ON CONFLICT (grupo_id, usuario_id) DO NOTHING
           `,
         [convite.grupo_id, req.usuario.id],
       );
@@ -1038,6 +1052,8 @@ app.post("/api/tarefas", autenticar, async (req, res) => {
               0,
               ?
             )
+
+          RETURNING id
           `,
       [req.usuario.id, texto, data, grupoId],
     );
@@ -1057,7 +1073,7 @@ app.post("/api/tarefas", autenticar, async (req, res) => {
     );
 
     res.status(201).json({
-      id: resultado.lastID,
+      id: resultado.rows[0].id,
 
       usuario_id: req.usuario.id,
 
