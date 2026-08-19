@@ -210,6 +210,19 @@
              GRID DE GRUPOS
         ================================================== -->
 
+          <div class="painel-grupo-card escondido" id="caixa-convites">
+            <div class="card-titulo">
+              <div>
+                <span class="card-kicker">CONVITES</span>
+                <h3>Convites pendentes</h3>
+              </div>
+
+              <span class="badge-info" id="contador-convites">0</span>
+            </div>
+
+            <div id="lista-convites" class="lista-convites"></div>
+          </div>
+
           <div class="painel-grupos-layout">
             <!-- LISTA DE GRUPOS -->
 
@@ -306,7 +319,8 @@
               </div>
 
               <p class="ajuda-campo">
-                A pessoa precisa ter uma conta no FocusList.
+                A pessoa precisa ter uma conta no FocusList e vai receber um
+                convite para aceitar antes de entrar no grupo.
               </p>
             </section>
 
@@ -348,6 +362,14 @@
 
                 <div id="lista-membros-grupo" class="lista-membros"></div>
               </div>
+
+              <button
+                type="button"
+                id="btn-sair-grupo"
+                class="btn-perigo escondido"
+              >
+                Sair do grupo
+              </button>
             </section>
 
             <!-- =================================================
@@ -382,7 +404,7 @@
               </div>
             </section>
           </div>
-          <div class="nova-tarefa-grupo-box">
+          <div class="painel-grupo-card">
             <div class="card-titulo">
               <div>
                 <span class="card-kicker">NOVA TAREFA</span>
@@ -395,6 +417,7 @@
             <div class="nova-tarefa-grupo-form">
               <input
                 type="text"
+                class="campo-padrao"
                 id="campo-tarefa-grupo"
                 placeholder="Digite uma tarefa para este grupo..."
                 maxlength="200"
@@ -402,6 +425,7 @@
 
               <input
                 type="text"
+                class="campo-padrao campo-data-grupo-input"
                 id="campo-data-grupo"
                 placeholder="📅 Data..."
                 readonly
