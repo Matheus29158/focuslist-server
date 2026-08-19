@@ -944,20 +944,7 @@ app.get("/api/tarefas", autenticar, async (req, res) => {
 
             t.concluida ASC,
 
-            CASE
-
-              WHEN
-                t.data IS NULL
-                OR
-                t.data = ''
-
-              THEN 1
-
-              ELSE 0
-
-            END ASC,
-
-            t.data ASC,
+            t.data ASC NULLS LAST,
 
             t.id DESC
           `,
