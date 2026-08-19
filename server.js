@@ -949,7 +949,7 @@ app.get("/api/tarefas", autenticar, async (req, res) => {
               WHEN
                 t.data IS NULL
                 OR
-                t.data = ""
+                t.data = ''
 
               THEN 1
 
