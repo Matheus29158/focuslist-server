@@ -1,4 +1,4 @@
-const API_URL = "https://focuslist-server-us0y.onrender.com/";
+const API_URL = "https://focuslist-server-us0y.onrender.com/api";
 
 /* ======================================================
    LOGIN / CADASTRO
