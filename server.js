@@ -144,6 +144,22 @@ db.serialize(() => {
 
       )
     `);
+
+  db.run(`
+      CREATE TABLE IF NOT EXISTS convites (
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        grupo_id INTEGER NOT NULL,
+
+        usuario_id INTEGER NOT NULL,
+
+        convidado_por INTEGER NOT NULL,
+
+        status TEXT NOT NULL DEFAULT 'pendente'
+
+      )
+    `);
 });
 
 /* ======================================================
@@ -584,28 +600,75 @@ app.post("/api/grupos/:grupoId/membros", autenticar, async (req, res) => {
       });
     }
 
+    if (Number(usuario.id) === Number(req.usuario.id)) {
+      return res.status(400).json({
+        erro: "Você já faz parte deste grupo.",
+      });
+    }
+
+    const jaMembro = await buscar(
+      `
+          SELECT 1
+
+          FROM grupo_membros
+
+          WHERE grupo_id = ? AND usuario_id = ?
+
+          LIMIT 1
+          `,
+      [grupoId, usuario.id],
+    );
+
+    if (jaMembro) {
+      return res.status(400).json({
+        erro: "Essa pessoa já é membro do grupo.",
+      });
+    }
+
+    const convitePendente = await buscar(
+      `
+          SELECT 1
+
+          FROM convites
+
+          WHERE grupo_id = ? AND usuario_id = ? AND status = 'pendente'
+
+          LIMIT 1
+          `,
+      [grupoId, usuario.id],
+    );
+
+    if (convitePendente) {
+      return res.status(400).json({
+        erro: "Já existe um convite pendente para essa pessoa.",
+      });
+    }
+
     await executar(
       `
-        INSERT OR IGNORE INTO
-          grupo_membros
+        INSERT INTO convites
 
           (
             grupo_id,
-            usuario_id
+            usuario_id,
+            convidado_por,
+            status
           )
 
         VALUES
 
           (
             ?,
-            ?
+            ?,
+            ?,
+            'pendente'
           )
         `,
-      [grupoId, usuario.id],
+      [grupoId, usuario.id, req.usuario.id],
     );
 
     res.json({
-      mensagem: "Membro adicionado com sucesso.",
+      mensagem: "Convite enviado com sucesso.",
 
       usuario,
     });
@@ -613,7 +676,199 @@ app.post("/api/grupos/:grupoId/membros", autenticar, async (req, res) => {
     console.error(err);
 
     res.status(500).json({
-      erro: "Erro ao adicionar membro.",
+      erro: "Erro ao enviar convite.",
+    });
+  }
+});
+
+/* ======================================================
+   LISTAR CONVITES PENDENTES
+====================================================== */
+
+app.get("/api/convites", autenticar, async (req, res) => {
+  try {
+    const convites = await buscarTodos(
+      `
+          SELECT
+
+            c.id,
+
+            c.grupo_id,
+
+            g.nome AS grupo_nome,
+
+            u.nome AS convidado_por_nome
+
+          FROM convites c
+
+          INNER JOIN grupos g
+
+            ON g.id = c.grupo_id
+
+          INNER JOIN usuarios u
+
+            ON u.id = c.convidado_por
+
+          WHERE
+
+            c.usuario_id = ?
+
+            AND c.status = 'pendente'
+
+          ORDER BY c.id DESC
+          `,
+      [req.usuario.id],
+    );
+
+    res.json(convites);
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      erro: "Erro ao carregar convites.",
+    });
+  }
+});
+
+/* ======================================================
+   ACEITAR / RECUSAR CONVITE
+====================================================== */
+
+app.post("/api/convites/:id/responder", autenticar, async (req, res) => {
+  const id = Number(req.params.id);
+
+  const aceitar = Boolean(req.body.aceitar);
+
+  try {
+    const convite = await buscar(
+      `
+          SELECT *
+
+          FROM convites
+
+          WHERE id = ? AND usuario_id = ? AND status = 'pendente'
+
+          LIMIT 1
+          `,
+      [id, req.usuario.id],
+    );
+
+    if (!convite) {
+      return res.status(404).json({
+        erro: "Convite não encontrado.",
+      });
+    }
+
+    if (aceitar) {
+      await executar(
+        `
+          INSERT OR IGNORE INTO
+            grupo_membros
+
+            (
+              grupo_id,
+              usuario_id
+            )
+
+          VALUES
+
+            (
+              ?,
+              ?
+            )
+          `,
+        [convite.grupo_id, req.usuario.id],
+      );
+
+      await executar(
+        `
+          UPDATE convites
+
+          SET status = 'aceito'
+
+          WHERE id = ?
+          `,
+        [id],
+      );
+
+      return res.json({
+        mensagem: "Convite aceito. Você entrou no grupo.",
+      });
+    }
+
+    await executar(
+      `
+        UPDATE convites
+
+        SET status = 'recusado'
+
+        WHERE id = ?
+        `,
+      [id],
+    );
+
+    res.json({
+      mensagem: "Convite recusado.",
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      erro: "Erro ao responder convite.",
+    });
+  }
+});
+
+/* ======================================================
+   SAIR DO GRUPO
+====================================================== */
+
+app.post("/api/grupos/:grupoId/sair", autenticar, async (req, res) => {
+  const grupoId = Number(req.params.grupoId);
+
+  try {
+    const grupo = await buscar(
+      `
+          SELECT *
+
+          FROM grupos
+
+          WHERE id = ?
+
+          LIMIT 1
+          `,
+      [grupoId],
+    );
+
+    if (!grupo) {
+      return res.status(404).json({
+        erro: "Grupo não encontrado.",
+      });
+    }
+
+    if (Number(grupo.criador_id) === Number(req.usuario.id)) {
+      return res.status(400).json({
+        erro: "Você é o criador do grupo e não pode sair dele.",
+      });
+    }
+
+    await executar(
+      `
+        DELETE FROM grupo_membros
+
+        WHERE grupo_id = ? AND usuario_id = ?
+        `,
+      [grupoId, req.usuario.id],
+    );
+
+    res.json({
+      mensagem: "Você saiu do grupo.",
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      erro: "Erro ao sair do grupo.",
     });
   }
 });
