@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://focuslist-server-us0y.onrender.com/sitemap.xml
+Sitemap: https://focuslist-r6gq.onrender.com/sitemap.xml
