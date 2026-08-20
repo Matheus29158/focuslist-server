@@ -4,12 +4,21 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const path = require("path");
+const { rateLimit } = require("express-rate-limit");
 
 const app = express();
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-const SECRET_KEY = "minha_chave_secreta";
+const SECRET_KEY = process.env.JWT_SECRET;
+
+if (!SECRET_KEY) {
+  console.error(
+    "Defina a variável de ambiente JWT_SECRET antes de iniciar o servidor.",
+  );
+
+  process.exit(1);
+}
 
 /* ======================================================
    CONFIGURAÇÃO
@@ -20,6 +29,21 @@ app.use(cors());
 app.use(express.json());
 
 app.use(express.static(path.join(__dirname, "www")));
+
+// Protege as rotas de autenticação contra força bruta.
+const limiteAuth = rateLimit({
+  windowMs: 15 * 60 * 1000,
+
+  limit: 20,
+
+  standardHeaders: true,
+
+  legacyHeaders: false,
+
+  message: {
+    erro: "Muitas tentativas. Tente novamente em alguns minutos.",
+  },
+});
 
 /* ======================================================
    BANCO
@@ -198,7 +222,7 @@ function autenticar(req, res, next) {
    CADASTRO
 ====================================================== */
 
-app.post("/api/cadastrar", async (req, res) => {
+app.post("/api/cadastrar", limiteAuth, async (req, res) => {
   const nome = String(req.body.nome || "").trim();
 
   const email = String(req.body.email || "")
@@ -253,7 +277,7 @@ app.post("/api/cadastrar", async (req, res) => {
    LOGIN
 ====================================================== */
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", limiteAuth, async (req, res) => {
   const email = String(req.body.email || "")
     .trim()
     .toLowerCase();
@@ -280,9 +304,10 @@ app.post("/api/login", async (req, res) => {
       [email],
     );
 
+    // Mensagem única para não revelar se o e-mail existe ou não.
     if (!usuario) {
       return res.status(400).json({
-        erro: "Usuário não encontrado.",
+        erro: "E-mail ou senha incorretos.",
       });
     }
 
@@ -290,7 +315,7 @@ app.post("/api/login", async (req, res) => {
 
     if (!senhaValida) {
       return res.status(400).json({
-        erro: "Senha incorreta.",
+        erro: "E-mail ou senha incorretos.",
       });
     }
 
