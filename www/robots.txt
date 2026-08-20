@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://focuslist-r6gq.onrender.com/sitemap.xml
